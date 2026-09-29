@@ -1,0 +1,7 @@
+fastapi[standard]
+passlib[Argon2]
+sqlmodel
+alembic
+asyncpg
+psycopg2-binary
+psycopg

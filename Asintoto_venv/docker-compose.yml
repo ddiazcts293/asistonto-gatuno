@@ -1,0 +1,18 @@
+services:
+  # Servicio de Base de Datos
+  db:
+    image: postgres:15-alpine  # Usamos una imagen ligera de PostgreSQL 15
+    container_name: db-postgres-4
+    restart: always
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test-pwd
+      POSTGRES_DB: test-db
+    ports:
+      - 127.0.0.1:5432:5432  # Mapea el puerto del contenedor al de su máquina local
+    volumes:
+      - db-postgres-4:/var/lib/postgresql/data  # Persistencia de datos
+
+# Definición del volumen para que los datos no se pierdan al reiniciar
+volumes:
+  db-postgres-4:
