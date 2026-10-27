@@ -1,18 +1,42 @@
 services:
-  # Servicio de Base de Datos
   db:
-    image: postgres:15-alpine  # Usamos una imagen ligera de PostgreSQL 15
-    container_name: db-postgres-4
-    restart: always
+    image: postgres:15-alpine
+    container_name: db-asistonto
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: test-pwd
-      POSTGRES_DB: test-db
+      POSTGRES_USER: 'admin'
+      POSTGRES_PASSWORD: 'admin123'
+      POSTGRES_DB: 'asistonto'
     ports:
-      - 127.0.0.1:5432:5432  # Mapea el puerto del contenedor al de su máquina local
+      - 127.0.0.1:5432:5432
     volumes:
-      - db-postgres-4:/var/lib/postgresql/data  # Persistencia de datos
+      - db-asistonto-data:/var/lib/postgresql/data
 
-# Definición del volumen para que los datos no se pierdan al reiniciar
+  redis:
+    image: redis:7-alpine
+    container_name: redis-asistonto
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:6379:6379
+    volumes:
+      - redis-asistonto-data:/data
+
+  minio:
+    image: chainguard/minio:latest
+    container_name: minio-asistonto
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    user: "65532:65532"
+    ports:
+      - 127.0.0.1:9000:9000
+      - 127.0.0.1:9001:9001
+    environment:
+      MINIO_ROOT_USER: "admin"
+      MINIO_ROOT_PASSWORD: "admin123"
+    volumes:
+      - minio-asistonto-data:/data
+
 volumes:
-  db-postgres-4:
+  db-asistonto-data:
+  redis-asistonto-data:
+  minio-asistonto-data:
