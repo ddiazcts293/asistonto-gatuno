@@ -1,6 +1,8 @@
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
 from typing import List
 from datetime import timedelta
 
@@ -15,12 +17,18 @@ from api.v1.dependencies import get_current_user
 
 router = APIRouter()
 
-# === CREAR usuario ===
+# -----------------
+# Registrar usuario
+# -----------------
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(user_data: UserCreate, session: Session = Depends(get_session)):
+def register_user(
+    user_data: UserCreate,
+    session: Session = Depends(get_session)
+) -> User:
     """
     Crea un nuevo usuario en la base de datos.
     """
+
     # Verificar si el email ya existe
     statement = select(User).where(User.email == user_data.email)
     existing_user = session.exec(statement).first()
@@ -45,56 +53,76 @@ def create_user(user_data: UserCreate, session: Session = Depends(get_session)):
     # Crear el usuario (en producción, hashear la contraseña con bcrypt)
     db_user = User(
         username=user_data.username,
+        name=user_data.name,
         email=user_data.email,
-        hashed_password=hashed_password,
-        date_of_birth=user_data.date_of_birth,
-        address=user_data.address,
         phone_number=user_data.phone_number,
+        hashed_password=hashed_password,
         is_active=True
     )
 
     session.add(db_user)
-    session.commit()
-    session.refresh(db_user)
 
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='El nombre de usuario o correo electrónico ya está registrado.'
+        ) from None
+
+    session.refresh(db_user)
     return db_user
 
-# === OBTENER todos los usuarios ===
+# --------------------------
+# Obtener todos los usuarios
+# --------------------------
 @router.get("/", response_model=List[UserResponse])
 def get_users(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user)
-):
+) -> list[User]:
     """
     Obtiene todos los usuarios registrados.
     """
-    users = session.exec(select(User)).all()
-    return users
 
-# === OBTENER usuario por ID ===
+    users = session.exec(select(User)).all()
+    return list(users)
+
+# ----------------------
+# Obtener usuario por ID
+# ----------------------
 @router.get("/{user_id}", response_model=UserResponse)
-def get_user(user_id: int, session: Session = Depends(get_session)):
+def get_user(
+    user_id: uuid.UUID,
+    session: Session = Depends(get_session)
+) -> User:
     """
     Obtiene un usuario específico por su ID.
     """
+
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Usuario con ID {user_id} no encontrado"
         )
+
     return user
 
-# === ACTUALIZAR usuario ===
+# ------------------
+# Actualizar usuario
+# ------------------
 @router.put("/{user_id}", response_model=UserResponse)
 def update_user(
-    user_id: int,
+    user_id: uuid.UUID,
     user_update: UserUpdate,
     session: Session = Depends(get_session)
-):
+) -> User:
     """
     Actualiza los datos de un usuario existente.
     """
+
     db_user = session.get(User, user_id)
     if not db_user:
         raise HTTPException(
@@ -103,7 +131,27 @@ def update_user(
         )
 
     # Actualizar solo los campos que vienen en el request
-    update_data = user_update.model_dump(exclude_unset=True) #"truco de magia" para permitir actualizaciones parciales (cuando el cliente solo quiere cambiar uno o dos campos, no todo el registro).
+    # 'Truco de magia' para permitir actualizaciones parciales (cuando el
+    # cliente solo quiere cambiar uno o dos campos, no todo el registro).
+    update_data = user_update.model_dump(exclude_unset=True)
+
+    if any(value is None for value in update_data.values()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Los campos enviados no pueden ser null.",
+        )
+
+    if 'username' in update_data or 'email' in update_data:
+        statement = select(User).where(User.id != user_id,
+            (User.username == update_data.get("username", db_user.username)) |
+            (User.email == update_data.get("email", db_user.email)),
+        )
+        duplicate = session.exec(statement).first()
+        if duplicate:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El usuario o correo ya está registrado.",
+            )
 
     # Verificar si se está actualizando la contraseña
     if 'password' in update_data:
@@ -113,17 +161,31 @@ def update_user(
         setattr(db_user, field, value)
 
     session.add(db_user)
-    session.commit()
-    session.refresh(db_user)
 
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="El usuario o correo ya está registrado.",
+        ) from None
+
+    session.refresh(db_user)
     return db_user
 
-# === ELIMINAR usuario ===
+# ----------------
+# Eliminar usuario
+# ----------------
 @router.delete('/{user_id}', status_code=status.HTTP_204_NO_CONTENT)
-def delete_user(user_id: int, session: Session = Depends(get_session)):
+def delete_user(
+    user_id: uuid.UUID,
+    session: Session = Depends(get_session)
+):
     """
     Elimina un usuario de la base de datos.
     """
+
     db_user = session.get(User, user_id)
     if not db_user:
         raise HTTPException(
@@ -136,12 +198,17 @@ def delete_user(user_id: int, session: Session = Depends(get_session)):
 
     return None  # 204 No Content no devuelve nada
 
+# --------------
+# Iniciar sesión
+# --------------
 @router.post('/token', response_model=Token)
-async def login_for_access_token(
+def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session)
-):
-    """Obtiene un token de acceso JWT validando el usuario y la contraseña."""
+) -> Token:
+    """
+    Obtiene un token de acceso JWT validando el usuario y la contraseña.
+    """
 
     # 1. Busca el usuario en la DB por su nombre
     statement = select(User).where(User.username == form_data.username)
@@ -163,4 +230,4 @@ async def login_for_access_token(
     )
 
     # 4. Retoma el token en el formato estándar OAuth2
-    return {'access_token': access_token, 'token_type': 'bearer'}
+    return Token(access_token= access_token)
