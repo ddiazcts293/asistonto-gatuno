@@ -1,40 +1,38 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from sqlmodel import SQLModel
+from fastapi.middleware.cors import CORSMiddleware
 
-#Importacion de archivos previos
-from db.database import create_db_and_tables
-from api.v1.user import *
+from models import user_model
+from api.v1.user_api import router as users_router
 from core.cors import setup_cors
+from core.config import settings
+from db.database import engine, create_db_and_tables
 
-"""
-Antes usábamos @app.on_event("startup"), pero FastAPI ahora prefiere usar un gestor de contexto (context manager) para manejar el ciclo de vida completo
-"""
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Se ejecuta al iniciar
     print("Iniciando base de datos...")
-    create_db_and_tables()
+    if not settings.USE_ALEMBIC:
+        create_db_and_tables()
     yield
     # Shutdown: Se ejecuta al cerrar (aquí podrías cerrar conexiones)
     print("Cerrando aplicación...")
 
 # Crear la app con lifespan
 app = FastAPI(
-    title="FastAPI",
-    description="Mi primera API con FastAPI y SQLModel",
-    version="1.0.0",
+    title=settings.PROJECT_NAME,
+    description=settings.PROJECT_DESCRIPTION or '',
+    version=settings.PROJECT_VERSION,
     lifespan=lifespan  # <-- Aquí está el cambio clave
 )
 
 # Configurar CORS desde core
-setup_cors(app)
+setup_cors(app, settings.CORS_ORIGINS)
 
 # Incluir routers
-app.include_router(router, prefix="/api/v1/users", tags=["Users"])
-
-@app.get("/")
-def root():
-    return {"message": "¡Bienvenido a FastAPI!"}
+app.include_router(users_router, prefix="/api/v1/users", tags=["Users"])
 
 @app.get("/health")
 def health_check():

@@ -2,9 +2,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 
 def setup_cors(app, origins: List[str] = ['*']):
-    """
-    Configura el middleware CORS para la aplicación FastAPI.
-    """
+    """Configura el middleware CORS para la aplicación FastAPI."""
 
     app.add_middleware(
         CORSMiddleware,
